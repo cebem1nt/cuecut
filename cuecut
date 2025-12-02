@@ -1,0 +1,153 @@
+#!/bin/env python3
+import subprocess, os, sys
+
+from shlex import split
+from pprint import pprint
+
+class Track:
+    def __init__(self, num: str, track_type: str):
+        self.track_type = track_type
+        self.num = num
+        self.index = 0
+        self.title = num
+        self.artist = "Unknown"
+        self.meta = []
+
+class Cue:
+    def __init__(self, lines: list[str]):
+        self.tracks: list[Track] = []
+        self.filename = ""
+        self.filetype = ""
+        self.meta = []
+        self.lines = lines
+
+        self.parse()
+        self.parse_tracks()
+
+    def parse(self):
+        i = 0
+
+        while i < len(self.lines):
+            data = split(self.lines[i])
+
+            if data[0] == "FILE":
+                self.filename = data[1]
+                self.filetype = data[2]
+                break
+
+            self.meta.append(data)
+            i += 1
+
+        self.lines = self.lines[i:]
+
+    def parse_tracks(self):
+        last = len(self.lines) - 1
+        track = None
+
+        for i in range(len(self.lines)):
+            data = split(self.lines[i])
+            
+            if track:
+                if data[0] == "INDEX":
+                    track.index = to_seconds(data[2])
+                elif data[0] == "TITLE":
+                    track.title = data[1]
+                elif data[0] == "PERFORMER":
+                    track.artist = data[1]
+                else:
+                    track.meta.append(data)
+
+            if data[0] == "TRACK" or i == last:
+                if track is not None:
+                    self.tracks.append(track)
+
+                track = Track(data[1], data[2])
+
+def to_seconds(time: str):
+    m, s, ms = time.split(":")
+    minutes = int(m)
+    seconds = int(s)
+    milliseconds = int(ms.ljust(3, "0")) 
+    return minutes * 60 + seconds + milliseconds / 1000.0
+
+def get_audio_length(audio: str):
+    command = [
+        'ffprobe', 
+        '-v', 'error', 
+        '-show_entries', 'format=duration', 
+        '-of', 
+        'default=noprint_wrappers=1:nokey=1', 
+        audio]
+    
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    
+    if result.returncode != 0:
+        raise Exception(f"Error: {result.stderr.strip()}")
+    
+    return float(result.stdout.strip())
+
+def cuecut(info: Cue, cover_img: str):
+    if not os.path.exists(info.filename):
+        print(f"File {info.filename} pointed in the .cue does not exist.")
+        sys.exit(1)
+
+    to_split = info.filename
+    total_tracks = len(info.tracks)
+    to_split_length = get_audio_length(info.filename)
+    _, to_split_ext = os.path.splitext(to_split)
+
+    for i in range(total_tracks):
+        track = info.tracks[i]
+        out_name = track.num + " " + track.title + to_split_ext
+
+        if os.path.exists(out_name):
+            print(f'"{out_name}" already exists')
+            sys.exit(1)
+
+        if i + 1 == total_tracks:
+            next_track_index = to_split_length
+        else:
+            next_track_index = info.tracks[i + 1].index
+
+        # Unfortunately this one will re-encode, i didn't find a way to 
+        # simply split but update tracks duration
+        
+        cmd = [
+            "ffmpeg",
+            "-ss", str(track.index),
+            "-to", str(next_track_index),
+            "-i", to_split,
+            "-i", cover_img,
+            "-metadata", f"title={track.title}",
+            "-metadata", f"artist={track.artist}",
+            "-metadata", f"track={track.num}/{total_tracks}",
+            "-disposition:v:0", "attached_pic",
+            "-metadata:s:v:0", "title=Album cover",
+            "-metadata:s:v:0", "comment=Cover (front)",
+            out_name
+        ]
+
+        print(cmd)
+        proc = subprocess.run(cmd, 
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE)
+
+        if proc.returncode != 0:
+            print("something went wrong: ")
+            print(proc.stderr)
+            sys.exit(1)
+
+def main(path: str, cover_img: str):
+    cover_img = os.path.expanduser(os.path.abspath(cover_img))
+    path = os.path.expanduser(path)
+    lines = []
+    
+    with open(path, "r", encoding="utf-8-sig") as f:
+        lines = f.readlines()
+    
+    cue_info = Cue(lines)
+    os.chdir(os.path.dirname(path))
+    cuecut(cue_info, cover_img)
+
+if __name__ == "__main__":
+    main(sys.argv[1], sys.argv[2])
