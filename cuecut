@@ -77,7 +77,8 @@ def get_audio_length(audio: str):
         '-show_entries', 'format=duration', 
         '-of', 
         'default=noprint_wrappers=1:nokey=1', 
-        audio]
+        audio
+    ]
     
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     
@@ -127,27 +128,30 @@ def cuecut(info: Cue, cover_img: str):
             out_name
         ]
 
-        print(cmd)
+        print(f"{out_name} - {track.index} to {next_track_index}")
         proc = subprocess.run(cmd, 
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE)
 
         if proc.returncode != 0:
-            print("something went wrong: ")
-            print(proc.stderr)
+            raise Exception(f"Error: {result.stderr.strip()}")
             sys.exit(1)
 
-def main(path: str, cover_img: str):
+def main(cue_file: str, cover_img: str):
     cover_img = os.path.expanduser(os.path.abspath(cover_img))
-    path = os.path.expanduser(path)
+    cue_file = os.path.expanduser(os.path.abspath(cue_file))
     lines = []
     
-    with open(path, "r", encoding="utf-8-sig") as f:
+    with open(cue_file, "r", encoding="utf-8-sig") as f:
         lines = f.readlines()
-    
+
+    print("Parsing", cue_file)    
     cue_info = Cue(lines)
-    os.chdir(os.path.dirname(path))
     cuecut(cue_info, cover_img)
 
 if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print(f"Usage: cuecut <cue file> <cover>")
+        sys.exit(1)
+
     main(sys.argv[1], sys.argv[2])
